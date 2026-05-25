@@ -9,6 +9,8 @@ export default async function handler(req, res) {
   
   const { source, url } = req.query;
   
+  console.log('Proxy request:', { source, url });
+  
   if (!source || !url) {
     return res.status(400).json({ error: 'Missing source or url parameter' });
   }
@@ -27,11 +29,16 @@ export default async function handler(req, res) {
   const baseUrl = API_BASES[source];
   
   if (!apiKey) {
-    return res.status(500).json({ error: `API key not configured for ${source}` });
+    console.error(`API key not configured for: ${source}`);
+    return res.status(500).json({ 
+      error: 'Configuration error',
+      message: `API key not configured for ${source}. Add it in Vercel Environment Variables.` 
+    });
   }
   
   try {
-    const targetUrl = `${baseUrl}${url}`;
+    const targetUrl = `${baseUrl}${decodeURIComponent(url)}`;
+    console.log('Target URL:', targetUrl);
     
     const headers = {};
     if (source === 'football-data') {
@@ -43,9 +50,11 @@ export default async function handler(req, res) {
     const response = await fetch(targetUrl, { headers });
     
     if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`API Error ${response.status}:`, errorBody);
       return res.status(response.status).json({ 
         error: `API returned ${response.status}`,
-        message: response.statusText 
+        message: errorBody.substring(0, 200)
       });
     }
     
@@ -53,6 +62,7 @@ export default async function handler(req, res) {
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60');
     return res.status(200).json(data);
   } catch (error) {
+    console.error('Proxy error:', error.message);
     return res.status(500).json({ error: 'Proxy request failed', message: error.message });
   }
 }
