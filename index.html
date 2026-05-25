@@ -456,8 +456,6 @@
     let lw={homeAdv:1.18,drawCorr:0.08,formW:0.5,eloBlendW:0.12};
     let currentAsianLine=0.25;
     let teamFormData={};
-    // API keys are now routed through serverless proxy - NEVER exposed to client
-    const API_BASES={footballData:'/api/proxy?source=football-data&url=',apiFootball:'/api/proxy?source=api-football&url='};
     let autoSrc='football-data',manSrc='football-data';
     let upcomingFix=[];
     let currentHistoryFilter='all';
@@ -560,11 +558,16 @@
     document.querySelectorAll('#autoPage .api-source-btn').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('#autoPage .api-source-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');autoSrc=b.dataset.asrc;}));
     document.querySelectorAll('#manualPage .api-source-btn').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('#manualPage .api-source-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');manSrc=b.dataset.msrc;$('manualInputSection').classList.toggle('hidden',manSrc!=='manual');}));
 
-    // API fetch helper - routes through serverless proxy
+    // API fetch helper - routes through Vercel serverless proxy
     async function apiFetch(source, endpoint) {
-      const url = `${API_BASES[source]}${endpoint}`;
-      const res = await fetch(url);
-      if(!res.ok) throw new Error(`API error: ${res.status}`);
+      const proxyUrl = `/api/proxy?source=${source}&url=${encodeURIComponent(endpoint)}`;
+      console.log('Fetching:', proxyUrl);
+      const res = await fetch(proxyUrl);
+      if(!res.ok) {
+        const errorText = await res.text();
+        console.error('API Error:', res.status, errorText);
+        throw new Error(`API error: ${res.status} - ${errorText}`);
+      }
       return res.json();
     }
 
@@ -715,7 +718,7 @@
 
     async function fetchRecentMatches(){
       if(!selHome||!selAway){alert('Select teams first');return;}
-      try{let homeName=selHome.name;let url=`/teams?name=${encodeURIComponent(homeName)}`;let dataHome=await apiFetch('football-data',url);if(dataHome.teams&&dataHome.teams.length>0){let teamId=dataHome.teams[0].id;let dataM=await apiFetch('football-data',`/teams/${teamId}/matches?limit=5&status=FINISHED`);if(dataM.matches&&dataM.matches.length>0){let totGF=0,totGA=0,count=0;dataM.matches.forEach(m=>{let isHome=m.homeTeam.id===teamId;let gf=isHome?m.score.fullTime.home:m.score.fullTime.away;let ga=isHome?m.score.fullTime.away:m.score.fullTime.home;totGF+=gf;totGA+=ga;count++;});if(count>0){if(selHome){selHome.recentGF=totGF/count;selHome.recentGA=totGA/count;}teamFormData[homeName]={recentGF:totGF/count,recentGA:totGA/count};}}}showToast(`📜 Form data fetched for ${homeName}`,'success');updateManualTeam('home');if(selHome&&selAway)calculateAll();}catch(e){console.error('Form fetch error:',e);showToast('⚠️ Form fetch limited','error');}}
+      try{let homeName=selHome.name;let dataHome=await apiFetch('football-data',`/teams?name=${encodeURIComponent(homeName)}`);if(dataHome.teams&&dataHome.teams.length>0){let teamId=dataHome.teams[0].id;let dataM=await apiFetch('football-data',`/teams/${teamId}/matches?limit=5&status=FINISHED`);if(dataM.matches&&dataM.matches.length>0){let totGF=0,totGA=0,count=0;dataM.matches.forEach(m=>{let isHome=m.homeTeam.id===teamId;let gf=isHome?m.score.fullTime.home:m.score.fullTime.away;let ga=isHome?m.score.fullTime.away:m.score.fullTime.home;totGF+=gf;totGA+=ga;count++;});if(count>0){if(selHome){selHome.recentGF=totGF/count;selHome.recentGA=totGA/count;}teamFormData[homeName]={recentGF:totGF/count,recentGA:totGA/count};}}}showToast(`📜 Form data fetched for ${homeName}`,'success');updateManualTeam('home');if(selHome&&selAway)calculateAll();}catch(e){console.error('Form fetch error:',e);showToast('⚠️ Form fetch limited','error');}}
 
     function logManualResult(){if(!lastPred){alert('No prediction');return;}let hg=parseInt($('actualHomeGoals').value)||0,ag=parseInt($('actualAwayGoals').value)||0;calData.push({home:selHome.name,away:selAway.name,predicted:lastPred.ensemble.scores[0],actual:{home:hg,away:ag}});saveData();updateCalDisplay();$('learningInsights').innerHTML=`<div style="background:rgba(0,255,136,0.1);border-radius:8px;padding:0.3rem;">✅ Logged: ${selHome.name} ${hg}-${ag} ${selAway.name}</div>`;}
 
@@ -976,7 +979,6 @@
     };
     window.fetchAutoLeagueData = fetchAutoLeagueData;
 
-    // ==================== SAVE TO HISTORY ====================
     async function saveCurrentToHistory(){
       if(!lastPred||!selHome||!selAway){showToast('❌ No prediction to save','error');return;}
       const m=calcMarkets(lastPred.ensemble.scores);const ah=lastPred.ensemble.asianHandicap;const dc=lastPred.ensemble.doubleChance;
@@ -1007,7 +1009,6 @@
       try{const id=await dbAdd(record);showToast(`✅ Saved: ${f.home} vs ${f.away}`,'success');}catch(e){console.error('Save error:',e);showToast('❌ Save failed','error');}
     };
 
-    // ==================== HISTORY FILTER/SORT ====================
     function setHistoryFilter(f){currentHistoryFilter=f;document.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',b.dataset.hf===f));renderHistoryCards();}
     function filterRecords(records){const now=new Date();const search=($('historySearch')?.value||'').toLowerCase();return records.filter(r=>{const s=search;const matchSearch=!s||r.homeTeam.toLowerCase().includes(s)||r.awayTeam.toLowerCase().includes(s)||(r.leagueName||'').toLowerCase().includes(s)||(r.ftHome!=null?`${r.ftHome}-${r.ftAway}`:'').includes(s);if(!matchSearch)return false;const ts=new Date(r.timestamp);const isSameDay=(a,b)=>a.toDateString()===b.toDateString();const sameWeek=(a,b)=>{const d=new Date(b);d.setDate(d.getDate()-d.getDay());return a>=d;};const sameMonth=(a,b)=>a.getMonth()===b.getMonth()&&a.getFullYear()===b.getFullYear();const sameYear=(a,b)=>a.getFullYear()===b.getFullYear();switch(currentHistoryFilter){case'today':return isSameDay(ts,now);case'week':return sameWeek(ts,now);case'month':return sameMonth(ts,now);case'year':return sameYear(ts,now);case'wins':return r.status==='win';case'losses':return r.status==='loss';case'pending':return r.status==='pending';case'cshits':return r.correctScoreHit===true;case'doublechance':return r.doubleChanceResults&&(r.doubleChanceResults.homeOrDraw===true||r.doubleChanceResults.awayOrDraw===true);case'asian':return r.asianHandicapResult==='home_win'||r.asianHandicapResult==='away_win';default:return true;}});}
     function sortRecords(records){const s=$('historySort')?.value||'newest';return[...records].sort((a,b)=>{if(s==='newest')return b.timestamp-a.timestamp;if(s==='oldest')return a.timestamp-b.timestamp;if(s==='wins'){const ws={win:0,'half-win':1,pending:2,loss:3};return(ws[a.status]||2)-(ws[b.status]||2);}if(s==='losses'){const ls={loss:0,'half-win':1,pending:2,win:3};return(ls[a.status]||2)-(ls[b.status]||2);}return b.timestamp-a.timestamp;});}
